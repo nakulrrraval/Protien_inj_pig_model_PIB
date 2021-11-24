@@ -1,0 +1,282 @@
+---
+title: "KM fibril injection PIB"
+author: "PPS/NRR"
+date: "6/15/2020"
+output: 
+ html_document:
+  toc: true 
+  toc_float: true 
+  toc_depth: 3
+  
+---
+```{r setup}
+library(kinfitr)
+library(mgcv) 
+library(granviller) 
+library(tidyverse)
+ggplot2::theme_set(theme_light()) #for graphical purpose
+alldat <- readRDS("./RawData/alldat_raw.rds") #load raw data
+```
+
+```{r Create weights}
+#Function to create weights
+create_weights <- function(tacs)
+  {
+  new_weights <- kinfitr::weights_create(t_start = tacs$Times[1],
+                          t_end = tacs$Times[length(tacs$Times)],
+                          tac = tacs$Neo.cx,
+                          radioisotope = c("C11"),
+                          method = 2,
+                          minweight = 0.7)
+  tacs$Weights <- new_weights
+  return(tacs)
+}
+
+#Apply function to create weights
+alldat <- alldat %>%
+  mutate( tacs = purrr::pmap(.l = list(tacs), .f = create_weights))
+
+```
+
+```{r Calculate AIF}
+#Calculate AIF 
+alldat %<>% 
+  group_by(Subjname) %>% 
+  mutate(input = map(blooddata, ~bd_create_input(blooddata = .x) )) %>%
+  ungroup()
+
+```
+
+```{r input shift}
+#Function to calculate the input function delay
+inpshift_profiler <- function(Subj, tacs, input)
+  {
+  p1 <- kinfitr::lin2tcm_inpshiftProfile(t_tac = tacs$Times, 
+         tac = tacs$Neo.cx, 
+         input = input, 
+         weights = tacs$Weights,
+         vB = 0.05)
+  inpshift <- p1$data$inpshift[which.min(p1$data$log_RSS)]
+}
+
+#Apply function to calculate the input function delay
+alldat <- alldat %>%
+  mutate( inpshift = pmap_dbl( .l = list(Subjname, tacs, input) , .f = inpshift_profiler ))  
+
+```
+
+```{r k2 estimation mrtm}
+
+alldatref_mrtm1 <- alldat %>%
+  select(Subjname, tacs) %>%
+  unnest() %>%
+  select(c( Subjname, Times, Weights, 
+            inj1,
+            inj2,
+            Occipital.cx)) %>%
+  gather(Region, TAC, -c(Subjname, Times, Weights, Occipital.cx)) %>%
+  group_by(Subjname, Region) %>%
+  nest(.key = 'tacs')
+
+
+k2pEst_mrtm1 <- function(tacs)
+  {
+  
+ kinfitr::mrtm1(t_tac = tacs$Times, 
+                reftac = tacs$Occipital.cx,
+                roitac = tacs$TAC,
+                weights = tacs$Weights)
+}
+
+
+alldatref_mrtm1 <- alldatref_mrtm1 %>%
+  mutate(mrtm1.fit = map(.x = tacs,.f = k2pEst_mrtm1)) %>%
+  mutate(k2p.mrtm1 = map_dbl(mrtm1.fit, c("par", "k2prime")))
+
+```
+
+```{r k2prime estimation srtm}
+#Ungroup data for SRTM
+alldatref_srtm <- alldat %>%
+  select(Subjname, tacs) %>%
+  unnest() %>%
+  select(c( Subjname, Times, Weights,
+            inj1,
+            inj2,
+            Occipital.cx)) %>%
+  gather(Region, TAC, -c(Subjname, Times, Weights, Occipital.cx)) %>%
+  group_by(Subjname, Region) %>%
+  nest(.key = 'tacs')
+
+#Function to fit SRTM1
+k2pEst_srtm <- function(tacs)
+  {
+  
+ kinfitr::srtm(t_tac = tacs$Times, 
+                reftac = tacs$Occipital.cx,
+                roitac = tacs$TAC,
+                weights = tacs$Weights,
+               multstart_iter = 5)
+}
+
+#Apply function to fit SRTM1
+alldatref_srtm_only_high_injreg <- alldatref_srtm %>% #Only high (AD homo) and medium (asyn PFF) binding regions are included
+  filter(Subjname == 'pib001_p84' & Region == 'inj1' | 
+            Subjname == 'pib002_p89' & Region == 'inj1'|
+            Subjname == 'pib004_p102' & Region == 'inj1'|
+            Subjname == 'pib005_p199' & Region == 'inj1'|
+            Subjname == 'pib001_p84' & Region == 'inj2'|
+            Subjname == 'pib006_p220' & Region == 'inj2'|
+            Subjname == 'pib007_p228' & Region == 'inj2') %>%
+  
+  mutate(srtm.fit = map(.x = tacs,.f = k2pEst_srtm)) %>%
+  
+  mutate(BP.srtm = map_dbl(srtm.fit, c("par", "bp"))) %>%
+  
+  mutate(k2.srtm = map_dbl(srtm.fit, c("par", "k2"))) %>%
+  
+  mutate(R1.srtm = map_dbl(srtm.fit, c("par", "R1"))) %>%
+  
+  mutate(k2.prime.srtm = k2.srtm/R1.srtm)
+
+alldatref_srtm_k2prime_bp <- alldatref_srtm_only_high_injreg %>% 
+  select(Subjname, Region, k2.prime.srtm, BP.srtm)
+
+write.csv(alldatref_srtm_k2prime_bp, file = './DerivedData/alldatref_srtm_k2prime_bp.csv')
+
+
+```
+
+
+```{r k2prime estimation MRTM1}
+#Ungroup data for MRTM1
+alldatref_mrtm1 <- alldat %>%
+  select(Subjname, tacs) %>%
+  unnest() %>%
+  select(c( Subjname, Times, Weights, 
+            #Neo.cx,
+            inj1,
+            inj2,
+            #Cerebellum,
+            Occipital.cx)) %>%
+  gather(Region, TAC, -c(Subjname, Times, Weights, Occipital.cx)) %>%
+  group_by(Subjname, Region) %>%
+  nest(.key = 'tacs')
+
+#Function to fit MRTM1
+k2pEst_mrtm1 <- function(tacs)
+  {
+  
+ kinfitr::mrtm1(t_tac = tacs$Times, 
+                reftac = tacs$Occipital.cx,
+                roitac = tacs$TAC,
+                weights = tacs$Weights)
+}
+
+#Apply function to fit MRTM1
+alldatref_mrtm1_only_high_injreg <- alldatref_mrtm1 %>% #Only high (AD homo) and medium (asyn PFF) binding regions are included
+  filter(Subjname == 'pib001_p84' & Region == 'inj1' | 
+            Subjname == 'pib002_p89' & Region == 'inj1'|
+            Subjname == 'pib004_p102' & Region == 'inj1'|
+            Subjname == 'pib005_p199' & Region == 'inj1'|
+            Subjname == 'pib001_p84' & Region == 'inj2'|
+            Subjname == 'pib006_p220' & Region == 'inj2'|
+            Subjname == 'pib007_p228' & Region == 'inj2') %>%
+  
+  mutate(mrtm1.fit = map(.x = tacs,.f = k2pEst_mrtm1)) %>%
+  
+  mutate(BP.mrtm1 = map_dbl(mrtm1.fit, c("par", "bp"))) %>%
+  
+  mutate(k2.prime.mrtm1 = map_dbl(mrtm1.fit, c("par", "k2prime")))
+
+
+alldatref_mrtm1_k2prime_bp <- alldatref_mrtm1_only_high_injreg %>% 
+  select(Subjname, Region, k2.prime.mrtm1, BP.mrtm1)
+
+write.csv(alldatref_mrtm1_k2prime_bp, file = './DerivedData/alldatref_mrtm1_k2prime_bp.csv')
+```
+
+
+```{r SRTM2}
+#Ungroup data for SRTM2
+alldatref_srtm2 <- alldat %>%
+  select(Subjname, tacs) %>%
+  unnest() %>%
+  select(c( Subjname, Times, Weights, 
+            #Neo.cx,
+            inj1,
+            inj2,
+            Cerebellum,
+            Occipital.cx)) %>%
+  gather(Region, TAC, -c(Subjname, Times, Weights, Occipital.cx)) %>%
+  group_by(Subjname, Region) %>%
+  nest(.key = 'tacs')
+
+#Function to fit SRTM2
+srtm2.func <- function(tacs)
+  {
+  
+ kinfitr::srtm2(t_tac = tacs$Times, 
+                reftac = tacs$Occipital.cx,
+                roitac = tacs$TAC,
+                weights = tacs$Weights,
+                k2prime = 0.03)
+}
+
+#Apply function to fit SRTM2
+alldatref_srtm2 <- alldatref_srtm2 %>%
+  mutate(srtm2.fit = map(.x = tacs,.f = srtm2.func)) %>%
+  mutate(BP.srtm2 = map_dbl(srtm2.fit, c("par", "bp")))
+
+srtm2BPnd_occipital <- alldatref_srtm2 %>%
+  select(Subjname, Region, BP.srtm2)
+
+write.csv(srtm2BPnd_occipital, file = './DerivedData/srtm2BPnd_occipital.csv')
+
+```
+
+
+```{r Logan Plot}
+#Ungroup TAC data
+alldatLogan <- alldat %>%
+  select(Subjname, tacs) %>%
+  unnest() %>%
+  select(c( Subjname, Times, Weights,
+            Occipital.cx, 
+            inj1,
+            inj2,
+            Cerebellum)) %>% #select the Regions to model
+  gather(Region, TAC, -c(Subjname, Times, Weights)) %>%
+  group_by(Subjname, Region) %>%
+  nest(.key = 'tacs')
+
+#Merge back blood data and delay fit
+alldatLogan <- alldat %>%
+  select(Subjname, blooddata, input, inpshift) %>%
+  left_join(alldatLogan, .) 
+
+#Function to fit Logan plot
+fitlogan <- function(tacs, input, inpshift) 
+  {
+  Loganplot(t_tac = tacs$Times, 
+         tac = tacs$TAC, 
+         input = input, 
+         tstarIncludedFrames = 10,
+         weights = tacs$Weights,
+         inpshift = inpshift, 
+         vB = 0.05) 
+  }
+
+#Apply function to fit Logan plot
+alldatLogan <- alldatLogan %>%  
+  mutate(fit_logan = pmap(list(tacs, input, inpshift), .f = fitlogan)) %>%
+  mutate(Vt.logan = map_dbl(fit_logan, c('par', 'Vt')))
+
+LoganVt <- alldatLogan %>%
+  select(Subjname, Region, Vt.logan)
+
+write.csv(LogantVt, file = './DerivedData/LoganVt.csv')
+
+```
+
+
