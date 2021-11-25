@@ -18,10 +18,51 @@ library(tidyverse)
 rawdata_url <- ("https://github.com/nakulrrraval/Protien_depo_pig_model_PIB/blob/PET/alldat_raw.RDS")
 download.file(rawdata_url, "alldat_raw.RDS", method = "curl")
 alldat <- readRDS("alldat_raw.RDS")
-
 ```
 
-```{r Create weights}
+```{r Modelling blood curves, eval=T}
+set.seed(12345)
+
+meanBIC <- alldat %>% 
+  filter(Subjname != 'pib007_p228' & Subjname != 'pib006_p220', Subjname != 'pib005_p199' ) %>% #remove the  that only have  pop-parent-fraction 
+  group_by(Subjname) %>%
+  #extract the metabolite data into their "own dataframes" 
+  mutate(pfdat = map(blooddata, 
+                ~bd_extract(.x, output = "parentFraction",what = "raw")),
+         #fit metabolite data using different models       
+         hillmodel = map(pfdat,
+                ~metab_hill(.x$time, .x$parentFraction, multstart_iter = 500)),
+         hillgaumodel = map(pfdat,
+                ~metab_hillguo(.x$time, .x$parentFraction, multstart_iter = 500)),
+         powmodel = map(pfdat,
+                ~metab_power(.x$time, .x$parentFraction, multstart_iter = 500)),
+         invgammamodel = map(pfdat,
+                ~metab_invgamma(.x$time, .x$parentFraction, multstart_iter = 500)),
+         expmodel = map(pfdat,
+                ~metab_exponential(.x$time, .x$parentFraction, multstart_iter = 500)),
+         
+         #Extract the information criteria for each model 
+         hillmodel.BIC= unlist(map(hillmodel, ~BIC(.x))),
+         pow.BIC = unlist(map(powmodel, ~BIC(.x))),
+         invgamma.BIC = unlist(map(invgammamodel, ~BIC(.x))),
+         exp.BIC = unlist(map(expmodel, ~BIC(.x)))
+         
+         ) %>%
+  ungroup() %>%
+#Calculate the mean information criteria for each model over all subjects
+  summarise(hillmodel.meanBIC = mean(hillmodel.BIC),
+            pow.meanBIC = mean(pow.BIC), 
+             invgamma.meanBIC = mean(invgamma.BIC),
+             exp.meanBIC = mean(exp.BIC))
+             
+#output the meaninformation criteria as table
+ knitr::kable(x = data.frame(
+    Model = c('hill', 'Power','Inverse gamma','Exponential'),
+    meanBIC = as.vector(unlist( meanBIC[]))),
+    digits = 3, caption = "Bayesian Information Criteria")
+```
+
+```{r Create weights for brain TAC}
 #Function to create weights
 create_weights <- function(tacs)
   {
@@ -38,6 +79,20 @@ create_weights <- function(tacs)
 #Apply function to create weights
 alldat <- alldat %>%
   mutate( tacs = purrr::pmap(.l = list(tacs), .f = create_weights))
+```
+
+```{r PF model invgamma, eval=T}
+set.seed(12345)
+
+alldat <- alldat %>% 
+  group_by(Subjname) %>% 
+  mutate(pfdat = map(blooddata, 
+                ~bd_extract(.x, output = "parentFraction", what = "raw")),
+         invgamma = map(pfdat,
+                ~metab_invgamma(.x$time, .x$parentFraction, multstart_iter = 10000)),
+         blooddata = map2(blooddata, invgamma,
+                ~bd_addfit(.x, .y, modeltype = "parentFraction"))) %>%
+  select(-pfdat) #remove the extracted parent-fraction data to keep the alldat df tidy  
 ```
 
 ```{r Calculate AIF}
