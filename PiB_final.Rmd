@@ -64,7 +64,8 @@ inpshift_profiler <- function(Subj, tacs, input)
 alldat <- alldat %>%
   mutate( inpshift = pmap_dbl( .l = list(Subjname, tacs, input) , .f = inpshift_profiler ))  
 ```
-```{r k2prime estimation srtm}
+
+```{r k2prime estimation SRTM}
 #Ungroup data for SRTM
 alldatref_srtm <- alldat %>%
   select(Subjname, tacs) %>%
@@ -103,46 +104,6 @@ alldatref_srtm_only_high_injreg <- alldatref_srtm %>% #Only high (AD homo) and m
   mutate(R1.srtm = map_dbl(srtm.fit, c("par", "R1"))) %>%
   mutate(k2.prime.srtm = k2.srtm/R1.srtm)
 ```
-
-```{r k2prime estimation MRTM1}
-#Ungroup data for MRTM1
-alldatref_mrtm1 <- alldat %>%
-  select(Subjname, tacs) %>%
-  unnest() %>%
-  select(c( Subjname, Times, Weights, 
-            #Neo.cx,
-            inj1,
-            inj2,
-            #Cerebellum,
-            Occipital.cx)) %>%
-  gather(Region, TAC, -c(Subjname, Times, Weights, Occipital.cx)) %>%
-  group_by(Subjname, Region) %>%
-  nest(.key = 'tacs')
-
-#Function to fit MRTM1
-k2pEst_mrtm1 <- function(tacs)
-  {
-  
- kinfitr::mrtm1(t_tac = tacs$Times, 
-                reftac = tacs$Occipital.cx,
-                roitac = tacs$TAC,
-                weights = tacs$Weights)
-}
-
-#Apply function to fit MRTM1
-alldatref_mrtm1_only_high_injreg <- alldatref_mrtm1 %>% #Only high (AD homo) and medium (asyn PFF) binding regions are included
-  filter(Subjname == 'pib001_p84' & Region == 'inj1' | 
-            Subjname == 'pib002_p89' & Region == 'inj1'|
-            Subjname == 'pib004_p102' & Region == 'inj1'|
-            Subjname == 'pib005_p199' & Region == 'inj1'|
-            Subjname == 'pib001_p84' & Region == 'inj2'|
-            Subjname == 'pib006_p220' & Region == 'inj2'|
-            Subjname == 'pib007_p228' & Region == 'inj2') %>%
-  mutate(mrtm1.fit = map(.x = tacs,.f = k2pEst_mrtm1)) %>%
-  mutate(BP.mrtm1 = map_dbl(mrtm1.fit, c("par", "bp"))) %>%
-  mutate(k2.prime.mrtm1 = map_dbl(mrtm1.fit, c("par", "k2prime")))
-```
-
 
 ```{r SRTM2}
 #Ungroup data for SRTM2
@@ -213,8 +174,4 @@ alldatLogan <- alldatLogan %>%
   mutate(fit_logan = pmap(list(tacs, input, inpshift), .f = fitlogan)) %>%
   mutate(Vt.logan = map_dbl(fit_logan, c('par', 'Vt')))
 
-LoganVt <- alldatLogan %>%
-  select(Subjname, Region, Vt.logan)
-
-write.csv(LogantVt, file = './DerivedData/LoganVt.csv')
 ```
