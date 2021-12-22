@@ -15,7 +15,7 @@ library(mgcv)
 library(granviller) 
 library(tidyverse)
 
-rawdata_url <- ("https://github.com/nakulrrraval/Protien_depo_pig_model_PIB/blob/PET/alldat_raw.RDS")
+rawdata_url <- ("https://github.com/nakulrrraval/Protien_inj_pig_model_PIB/blob/PET/alldat_raw.RDS")
 download.file(rawdata_url, "alldat_raw.RDS", method = "curl")
 alldat <- readRDS("alldat_raw.RDS")
 ```
