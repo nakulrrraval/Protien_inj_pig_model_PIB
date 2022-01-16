@@ -15,9 +15,9 @@ library(mgcv)
 library(granviller) 
 library(tidyverse)
 
-rawdata_url <- ("https://github.com/nakulrrraval/Protien_inj_pig_model_PIB/blob/PET/alldat_raw.RDS")
-download.file(rawdata_url, "alldat_raw.RDS", method = "curl")
-alldat <- readRDS("alldat_raw.RDS")
+#Load raw data from GitHub 
+rawdata_url <- ("https://github.com/nakulrrraval/Protien_inj_pig_model_PIB/raw/PET/alldat_raw.RDS")
+alldat <- readRDS(url(rawdata_url, method="libcurl"))
 ```
 
 ```{r Modelling blood curves, eval=T}
